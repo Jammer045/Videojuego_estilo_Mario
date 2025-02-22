@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Juego estilo Super Mario</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { display: block; }
+        #gameOverMessage {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 48px;
+            color: red;
+            font-family: Arial, sans-serif;
+            text-align: center;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <div id="gameOverMessage">
+        Game Over<br>
+        <span style="font-size: 24px;">Presiona ENTER para reiniciar</span>
+    </div>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const gameOverMessage = document.getElementById('gameOverMessage');
+
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        const player = {
+                image: new Image(),
+                  x: 150,
+                y: canvas.height - 80,
+                width: 45,
+                height: 45,
+                speed: 5,
+                jumpForce: 15,
+                velocityY: 0,
+                isJumping: false,
+                moveLeft: false,
+                moveRight: false
+};
+
+player.image.src = "./images/pj_main.png";
+
+        let platforms = [];
+        let enemies = [];
+        let coins = [];
+        let clouds = [];
+
+        let camera = {
+            x: 0,
+            y: 0
+        };
+
+        let score = 0;
+        let gameOver = false;
+        let lastEnemyX = 0;
+        let lastCoinX = 0;
+
+        function generatePlatform() {
+            const minWidth = 100;
+            const maxWidth = 300;
+            const width = Math.random() * (maxWidth - minWidth) + minWidth;
+            const minGap = 50;
+            const maxGap = 150;
+            const gap = Math.random() * (maxGap - minGap) + minGap;
+            
+            let x, y;
+            if (platforms.length === 0) {
+                x = camera.x + canvas.width;
+                y = canvas.height - 30;
+            } else {
+                const lastPlatform = platforms[platforms.length - 1];
+                x = lastPlatform.x + lastPlatform.width + gap;
+                
+                const minY = Math.max(canvas.height * 0.5, lastPlatform.y - player.jumpForce * 2);
+                const maxY = Math.min(canvas.height * 0.8, lastPlatform.y + player.jumpForce * 2);
+                y = Math.random() * (maxY - minY) + minY;
+            }
+            
+            platforms.push({ x, y, width, height: 30 });
+        }
+
+        function generateEnemy(platformX, platformY, platformWidth) {
+            const minEnemyGap = 800;
+            if (platformX > lastEnemyX + minEnemyGap && Math.random() < 0.3) {
+                if (Math.random() < 0.5) {
+                    // Enemigo terrestre
+                    const x = platformX + Math.random() * (platformWidth - 30);
+                    const y = platformY - 30;
+                    enemies.push({ 
+                        x, 
+                        y, 
+                        width: 30, 
+                        height: 30, 
+                        speed: Math.random() > 0.5 ? 1 : -1,
+                        type: 'terrestrial',
+                        platformX,
+                        platformWidth
+                    });
+                } else {
+                    // Enemigo volador
+                    const x = platformX + Math.random() * (platformWidth - 30);
+                    const y = platformY - Math.random() * 100 - 50;
+                    enemies.push({ 
+                        x, 
+                        y, 
+                        width: 30, 
+                        height: 30, 
+                        speed: Math.random() > 0.5 ? 2 : -2,
+                        type: 'flying',
+                        amplitude: canvas.height * 0.6,
+                        angle: 0,
+                        initialY: y,
+                        verticalSpeed: 0.02
+                    });
+                }
+                lastEnemyX = platformX;
+            }
+        }
+
+        function generateCoin(platformX, platformY, platformWidth) {
+            const minCoinGap = 400;
+            if (platformX > lastCoinX + minCoinGap && Math.random() < 0.4) {
+                const x = platformX + Math.random() * (platformWidth - 20);
+                const y = platformY - Math.random() * 60 - 30;
+                coins.push({ x, y, width: 20, height: 20 });
+                lastCoinX = x;
+            }
+        }
+
+        function generateCloud() {
+            const y = Math.random() * (canvas.height / 2);
+            const width = Math.random() * 100 + 50;
+            const height = width / 2;
+            clouds.push({ x: camera.x + canvas.width, y, width, height, speed: Math.random() * 0.5 + 0.1 });
+        }
+
+        function drawSky() {
+            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            gradient.addColorStop(0, "#87CEEB");
+            gradient.addColorStop(1, "#E0F6FF");
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function drawCloud(cloud) {
+            ctx.fillStyle = "white";
+            ctx.beginPath();
+            ctx.arc(cloud.x - camera.x, cloud.y, cloud.height / 2, Math.PI * 0.5, Math.PI * 1.5);
+            ctx.arc(cloud.x - camera.x + cloud.width, cloud.y, cloud.height / 2, Math.PI * 1.5, Math.PI * 0.5);
+            ctx.rect(cloud.x - camera.x, cloud.y - cloud.height / 2, cloud.width, cloud.height);
+            ctx.fill();
+        }
+
+        function drawPlayer() {
+    if (player.image.complete) {
+        ctx.drawImage(player.image, player.x - camera.x, player.y, player.width, player.height);
+    } else {
+        ctx.fillStyle = 'blue';  // Color de respaldo si la imagen no se ha cargado
+        ctx.fillRect(player.x - camera.x, player.y, player.width, player.height);
+    }
+    }
+
+        function drawPlatforms() {
+            platforms.forEach(platform => {
+                // Dibujar la plataforma
+                ctx.fillStyle = 'green';
+                ctx.fillRect(platform.x - camera.x, platform.y, platform.width, platform.height);
+                
+                // Dibujar la "tierra" debajo de la plataforma
+                ctx.fillStyle = 'brown';
+                ctx.fillRect(platform.x - camera.x, platform.y + platform.height, platform.width, canvas.height - (platform.y + platform.height));
+            });
+        }
+
+        function drawEnemies() {
+            enemies.forEach(enemy => {
+                if (enemy.type === 'terrestrial') {
+                    ctx.fillStyle = 'red';  // Enemigo terrestre en rojo
+                } else {
+                    ctx.fillStyle = 'purple';  // Enemigo volador en morado
+                }
+                ctx.fillRect(enemy.x - camera.x, enemy.y, enemy.width, enemy.height);
+            });
+        }
+
+        function drawCoins() {
+            ctx.fillStyle = 'gold';
+            coins.forEach(coin => {
+                ctx.beginPath();
+                ctx.arc(coin.x - camera.x + coin.width / 2, coin.y + coin.height / 2, coin.width / 2, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        function drawScore() {
+            ctx.fillStyle = 'black';
+            ctx.font = '20px Arial';
+            ctx.fillText(`Puntuación: ${score}`, 10, 30);
+        }
+
+        function updatePlayer() {
+            if (gameOver) return;
+
+            player.velocityY += 0.8;
+            player.y += player.velocityY;
+
+            if (player.moveLeft && player.x > camera.x) {
+                player.x -= player.speed;
+            }
+            if (player.moveRight) {
+                player.x += player.speed;
+                if (player.x - camera.x > canvas.width * 0.6) {
+                    camera.x = player.x - canvas.width * 0.6;
+                }
+            }
+
+            if (player.y > canvas.height) {
+                gameOver = true;
+                gameOverMessage.style.display = 'block';
+                return;
+            }
+
+            let onPlatform = false;
+            platforms.forEach(platform => {
+                if (player.x < platform.x + platform.width &&
+                    player.x + player.width > platform.x &&
+                    player.y + player.height > platform.y &&
+                    player.y + player.height < platform.y + platform.height) {
+                    player.y = platform.y - player.height;
+                    player.isJumping = false;
+                    player.velocityY = 0;
+                    onPlatform = true;
+                }
+            });
+
+            if (!onPlatform) {
+                player.isJumping = true;
+            }
+        }
+
+        function updateEnemies() {
+            if (gameOver) return;
+
+            enemies.forEach(enemy => {
+                if (enemy.type === 'terrestrial') {
+                    enemy.x += enemy.speed;
+                    if (enemy.x <= enemy.platformX || enemy.x + enemy.width >= enemy.platformX + enemy.platformWidth) {
+                        enemy.speed *= -1;
+                    }
+                } else if (enemy.type === 'flying') {
+                    enemy.x += enemy.speed;
+                    enemy.angle += enemy.verticalSpeed;
+                    enemy.y = enemy.initialY + Math.sin(enemy.angle) * (enemy.amplitude / 2);
+                }
+            });
+        }
+
+        function updateClouds() {
+            clouds.forEach(cloud => {
+                cloud.x -= cloud.speed;
+            });
+        }
+
+        function checkCollisions() {
+            if (gameOver) return;
+
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const enemy = enemies[i];
+                if (player.x < enemy.x + enemy.width &&
+                    player.x + player.width > enemy.x &&
+                    player.y < enemy.y + enemy.height &&
+                    player.y + player.height > enemy.y) {
+                    
+                    if (player.velocityY > 0 && player.y + player.height < enemy.y + enemy.height / 2) {
+                        enemies.splice(i, 1);
+                        player.velocityY = -player.jumpForce / 2;
+                        score += 20;
+                    } else {
+                        gameOver = true;
+                        gameOverMessage.style.display = 'block';
+                    }
+                }
+            }
+
+            for (let i = coins.length - 1; i >= 0; i--) {
+                const coin = coins[i];
+                if (player.x < coin.x + coin.width &&
+                    player.x + player.width > coin.x &&
+                    player.y < coin.y + coin.height &&
+                    player.y + player.height > coin.y) {
+                    coins.splice(i, 1);
+                    score += 10;
+                }
+            }
+        }
+
+        function removeOffscreenObjects() {
+            platforms = platforms.filter(p => p.x + p.width > camera.x - 300);
+            enemies = enemies.filter(e => e.x + e.width > camera.x - 100);
+            coins = coins.filter(c => c.x + c.width > camera.x - 100);
+            clouds = clouds.filter(c => c.x + c.width > camera.x - 200);
+        }
+
+        function generateNewObjects() {
+            while (platforms[platforms.length - 1].x < camera.x + canvas.width * 2) {
+                generatePlatform();
+                const lastPlatform = platforms[platforms.length - 1];
+                generateEnemy(lastPlatform.x, lastPlatform.y, lastPlatform.width);
+                generateCoin(lastPlatform.x, lastPlatform.y, lastPlatform.width);
+            }
+
+            if (Math.random() < 0.02) generateCloud();
+        }
+
+        function resetGame() {
+            player.x = 150;
+            player.y = canvas.height - 80;
+            player.velocityY = 0;
+            player.moveLeft = false;
+            player.moveRight = false;
+            camera.x = 0;
+            score = 0;
+            platforms = [{ x: 0, y: canvas.height - 30, width: 200, height: 30 }];
+            enemies = [];
+            coins = [];
+            clouds = [];
+            lastEnemyX = 0;
+            lastCoinX = 0;
+            gameOver = false;
+            gameOverMessage.style.display = 'none';
+
+            for (let i = 0; i < 5; i++) {
+                generatePlatform();
+            }
+        }
+
+        function gameLoop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            drawSky();
+            updateClouds();
+            clouds.forEach(drawCloud);
+
+            updatePlayer();
+            updateEnemies();
+            checkCollisions();
+            removeOffscreenObjects();
+            generateNewObjects();
+
+            drawPlatforms();
+            drawPlayer();
+            drawEnemies();
+            drawCoins();
+            drawScore();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        document.addEventListener('keydown', (event) => {
+            if (event.code === 'ArrowLeft') {
+                player.moveLeft = true;
+            } else if (event.code === 'ArrowRight') {
+                player.moveRight = true;
+            } else if (event.code === 'Space' && !player.isJumping) {
+                player.velocityY = -player.jumpForce;
+                player.isJumping = true;
+            } else if (event.code === 'Enter' && gameOver) {
+                resetGame();
+            }
+        });
+
+        document.addEventListener('keyup', (event) => {
+            if (event.code === 'ArrowLeft') {
+                player.moveLeft = false;
+            } else if (event.code === 'ArrowRight') {
+                player.moveRight = false;
+            }
+        });
+
+        resetGame();
+        gameLoop();
+    </script>
+</body>
+</html>
